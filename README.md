@@ -1,358 +1,222 @@
-# ffi-like-roblox
+# signals-like-roblox
 
-Create Roblox-style classes from Windows DLLs using FFI.
+Roblox-style Signal implementation for Lune.
 
-> **Requires**: [Lune Custom Build](https://github.com/yanlvl99/lune-custom-build) with FFI support
+> **Requires**: [Lune Custom Build](https://github.com/yanlvl99/lune-custom-build)
 > 
 > **Docs**: [https://yanlvl99.github.io/lune-custom-build-doc/](https://yanlvl99.github.io/lune-custom-build-doc/)
 
 ## Installation
 
 ```bash
-lune --install ffi-like-roblox
+lune --install signals-like-roblox
 ```
 
 ## Quick Start
 
 ```lua
-local createClass = require("@ffi-like-roblox")
+local Signal = require("@signals-like-roblox")
 
-local Window = createClass({
-    Dll = "user32.dll",
-    
-    Constructor = function(lib, className, title)
-        return lib:call("FindWindowA", "u64", {"string", "string"}, className, title)
-    end,
-    
-    Properties = {
-        Title = {
-            type = "string",
-            get = function(lib, ptr)
-                local buf = require("@lune/ffi").buffer(256)
-                lib:call("GetWindowTextA", "i32", {"u64", "pointer", "i32"}, ptr, buf.ptr, 256)
-                return buf:readString()
-            end
-        }
-    }
-})
+local PlayerDied = Signal.new()
 
-local notepad = Window.new("Notepad", nil)
-print(notepad.Title)
+-- Connect listener
+PlayerDied:Connect(function(playerName, cause)
+    print(playerName, "died from", cause)
+end)
+
+-- Fire signal
+PlayerDied:Fire("John", "explosion")
 ```
 
 ---
 
 ## API Reference
 
-### `createClass(config) -> Class`
+### `Signal.new(onFirstConnect?)`
 
-Creates a new class with the specified configuration.
+Creates a new signal.
 
-```lua
-local MyClass = createClass({
-    Dll = "mydll.dll",
-    Constructor = { ... },
-    Properties = { ... },
-    Methods = { ... },
-    Static = { ... },
-    Events = { ... },
-})
-```
-
----
-
-## Configuration
-
-### `Dll: string`
-
-The DLL file to load.
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `onFirstConnect` | `function?` | Called once when first listener connects |
 
 ```lua
-Dll = "user32.dll"
-Dll = "kernel32.dll"
-Dll = "C:\\path\\to\\custom.dll"
-```
+local MySignal = Signal.new()
 
----
-
-### `Constructor`
-
-How to create instances. Can be a function or definition table.
-
-#### Function Constructor
-
-```lua
-Constructor = function(lib, arg1, arg2)
-    -- lib is the opened DLL
-    -- Return a pointer value
-    return lib:call("CreateObject", "pointer", {"i32", "i32"}, arg1, arg2)
-end
-```
-
-#### Definition Constructor
-
-```lua
-Constructor = {
-    symbol = "FindWindowA",
-    args = { "string", "string" },  -- Auto-converted
-}
-```
-
----
-
-### `Properties`
-
-Define readable/writable properties.
-
-```lua
-Properties = {
-    -- Read-only with custom getter
-    Title = {
-        type = "string",
-        get = function(lib, ptr)
-            local buf = ffi.buffer(256)
-            lib:call("GetWindowTextA", "i32", {"u64", "pointer", "i32"}, ptr, buf.ptr, 256)
-            return buf:readString()
-        end
-    },
-    
-    -- Read-write with symbol names
-    Visible = {
-        type = "bool",
-        get = "IsWindowVisible",   -- Automatic call
-        set = function(lib, ptr, value)
-            lib:call("ShowWindow", "bool", {"u64", "i32"}, ptr, value and 1 or 0)
-        end
-    },
-    
-    -- Write-only
-    Style = {
-        type = "i32",
-        set = "SetWindowLongA"
-    }
-}
-```
-
----
-
-### `Methods`
-
-Define instance methods.
-
-```lua
-Methods = {
-    -- With wrapper function
-    Close = {
-        wrapper = function(lib, ptr)
-            lib:call("PostMessageA", "bool", {"u64", "u32", "u64", "i64"}, ptr, 0x10, 0, 0)
-        end
-    },
-    
-    -- Auto-generated from symbol
-    Flash = {
-        symbol = "FlashWindow",
-        ret = "bool",
-        args = { "bool" }  -- Args after ptr
-    },
-    
-    Move = {
-        symbol = "MoveWindow",
-        ret = "bool",
-        args = { "i32", "i32", "i32", "i32", "bool" }
-    }
-}
-```
-
----
-
-### `Static`
-
-Define static class methods.
-
-```lua
-Static = {
-    GetDesktop = {
-        symbol = "GetDesktopWindow",
-        ret = "u64",
-        args = {}
-    },
-    
-    GetActive = {
-        wrapper = function(lib)
-            return lib:call("GetForegroundWindow", "u64", {})
-        end
-    }
-}
-```
-
-Usage:
-```lua
-local desktop = Window.GetDesktop()
-local active = Window.GetActive()
-```
-
----
-
-### `Events`
-
-Define signals that can be connected to.
-
-```lua
-Events = {
-    Closed = true,
-    Moved = true,
-    Resized = true,
-},
-
-MonitoringFunc = function(instance, rate)
-    -- Start polling for changes
-    task.spawn(function()
-        while instance._monitoring do
-            -- Check for changes and fire signals
-            task.wait(rate)
-        end
-    end)
-end,
-
-MonitoringRate = 0.1  -- Optional, default 0.1
-```
-
-Events are created as Signals when the instance is created:
-```lua
-local win = Window.new(...)
-win.Closed:Connect(function()
-    print("Window closed!")
+-- With activation callback
+local LazySignal = Signal.new(function()
+    print("First connection! Starting monitoring...")
 end)
 ```
 
 ---
 
-## Instance Properties
+### `Signal.newAction(actionFn, waitFn?, onFirstConnect?)`
 
-All instances have these built-in properties:
+Creates an Action - a hybrid signal/method. Callable as both property and method.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `_ptr` | `any` | The native pointer/handle |
-| `_lib` | `Library` | The opened DLL |
-| `_destroyed` | `boolean` | Whether Destroy() was called |
-| `_monitoring` | `boolean` | Whether event monitoring is active |
-
----
-
-## Class Methods
-
-### `Class.new(...) -> Instance`
-
-Creates a new instance.
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `actionFn` | `function` | Called when action is invoked |
+| `waitFn` | `function?` | Called by `:Wait()`, returns boolean |
+| `onFirstConnect` | `function?` | Called on first connection |
 
 ```lua
-local win = Window.new("Notepad", nil)
-```
+local CloseAction = Signal.newAction(
+    function() print("Closing...") end,
+    function(timeout) 
+        -- Wait logic, return true if success
+        return true 
+    end
+)
 
-### `Class.fromPointer(ptr) -> Instance`
+-- Use as method
+CloseAction()           -- prints "Closing..."
 
-Wraps an existing pointer.
-
-```lua
-local hwnd = SomeApi.GetWindowHandle()
-local win = Window.fromPointer(hwnd)
-```
-
-### `Instance:Destroy()`
-
-Marks the instance as destroyed.
-
-```lua
-win:Destroy()
--- win:SomeMethod() will now error
+-- Use Wait
+CloseAction:Wait(5)     -- Waits for completion
 ```
 
 ---
 
-## Type Conversion
+### Methods
 
-The wrapper automatically handles type conversion:
+#### `Signal:Connect(callback) -> Connection`
 
-| Lua Type | FFI Type | Notes |
-|----------|----------|-------|
-| `string` | Buffer → `pointer` | Auto-creates null-terminated buffer |
-| `nil` | `0` | For u64/pointer types |
-| `number` | As specified | Direct pass-through |
-| `boolean` | As specified | Direct pass-through |
+Connects a callback to the signal.
+
+```lua
+local connection = MySignal:Connect(function(a, b, c)
+    print("Received:", a, b, c)
+end)
+
+-- Later...
+connection:Disconnect()
+```
+
+#### `Signal:Once(callback) -> Connection`
+
+Connects a callback that fires only once.
+
+```lua
+MySignal:Once(function(value)
+    print("Only runs once:", value)
+end)
+```
+
+#### `Signal:Fire(...)`
+
+Fires the signal with arguments.
+
+```lua
+MySignal:Fire("hello", 123, true)
+```
+
+#### `Signal:Wait(timeout?) -> ...`
+
+Yields until signal fires. Returns the fired arguments.
+
+```lua
+-- Wait indefinitely
+local name, score = ScoreChanged:Wait()
+
+-- With timeout (returns nil if timeout)
+local result = MySignal:Wait(5)
+```
 
 ---
 
-## Complete Example
+### Connection Object
+
+| Property/Method | Type | Description |
+|-----------------|------|-------------|
+| `Connected` | `boolean` | Whether still connected |
+| `Disconnect()` | `function` | Disconnects the listener |
 
 ```lua
-local ffi = require("@lune/ffi")
-local createClass = require("@ffi-like-roblox")
+local conn = Signal:Connect(callback)
+print(conn.Connected)  -- true
+
+conn:Disconnect()
+print(conn.Connected)  -- false
+```
+
+---
+
+## Types
+
+```lua
+export type Connection = {
+    Connected: boolean,
+    Disconnect: (self: Connection) -> (),
+}
+
+export type Signal<T...> = {
+    Connect: (self: Signal<T...>, callback: (T...) -> ()) -> Connection,
+    Fire: (self: Signal<T...>, T...) -> (),
+    Wait: (self: Signal<T...>, timeout: number?) -> T...,
+    Once: (self: Signal<T...>, callback: (T...) -> ()) -> Connection,
+}
+
+export type Action = Signal<> & ((any) -> ())
+```
+
+---
+
+## Examples
+
+### Event System
+
+```lua
 local Signal = require("@signals-like-roblox")
 
-local Window = createClass({
-    Dll = "user32.dll",
-    
-    Constructor = function(lib, className, title)
-        local classPtr, titlePtr
-        if className then
-            local buf = ffi.buffer(#className + 1)
-            buf:writeString(0, className)
-            classPtr = buf.ptr
-        end
-        if title then
-            local buf = ffi.buffer(#title + 1)
-            buf:writeString(0, title)
-            titlePtr = buf.ptr
-        end
-        return lib:call("FindWindowA", "u64", {"pointer", "pointer"}, 
-            classPtr or ffi.null, titlePtr or ffi.null)
-    end,
-    
-    Properties = {
-        Title = {
-            type = "string",
-            get = function(lib, ptr)
-                local buf = ffi.buffer(256)
-                lib:call("GetWindowTextA", "i32", {"u64", "pointer", "i32"}, ptr, buf.ptr, 256)
-                return buf:readString()
-            end
-        },
-        IsVisible = {
-            type = "bool",
-            get = function(lib, ptr)
-                return lib:call("IsWindowVisible", "bool", {"u64"}, ptr)
-            end
-        }
-    },
-    
-    Methods = {
-        Close = {
-            wrapper = function(lib, ptr)
-                lib:call("PostMessageA", "bool", {"u64", "u32", "u64", "i64"}, ptr, 0x10, 0, 0)
-            end
-        },
-        Focus = {
-            wrapper = function(lib, ptr)
-                lib:call("SetForegroundWindow", "bool", {"u64"}, ptr)
-            end
-        }
-    },
-    
-    Static = {
-        GetFocused = {
-            wrapper = function(lib)
-                return lib:call("GetForegroundWindow", "u64", {})
-            end
-        }
-    }
-})
+local Events = {
+    PlayerJoined = Signal.new(),
+    PlayerLeft = Signal.new(),
+    ChatMessage = Signal.new(),
+}
 
--- Usage
-local notepad = Window.new("Notepad", nil)
-if notepad then
-    print("Found:", notepad.Title)
-    notepad:Focus()
-    notepad:Close()
+Events.PlayerJoined:Connect(function(name)
+    print(name, "joined the game")
+end)
+
+Events.ChatMessage:Connect(function(sender, message)
+    print("[" .. sender .. "]:", message)
+end)
+
+-- Fire events
+Events.PlayerJoined:Fire("Alice")
+Events.ChatMessage:Fire("Alice", "Hello everyone!")
+```
+
+### Lazy Initialization
+
+```lua
+local ExpensiveSignal = Signal.new(function()
+    print("Starting expensive operation...")
+    -- Only runs when someone connects
+end)
+
+-- Nothing happens yet...
+task.wait(5)
+
+-- Now the initialization runs
+ExpensiveSignal:Connect(function() end)
+```
+
+### Wait Pattern
+
+```lua
+-- Wait for user input
+print("Press any key...")
+local key = KeyPressed:Wait()
+print("You pressed:", key)
+
+-- With timeout
+local result = DataLoaded:Wait(10)
+if result then
+    print("Data loaded:", result)
+else
+    print("Timeout!")
 end
 ```
